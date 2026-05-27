@@ -1,0 +1,53 @@
+name: CI/CD Pipeline to Docker Hub
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-test-scan-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Check out the code
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      # 2. Run Tests (Example for Python)
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Install dependencies and test
+        run: |
+          pip install -r requirements.txt
+          pytest
+
+      # 3. Build the Docker Image
+      - name: Build Docker Image
+        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest .
+
+      # 4. Scan the Image with Trivy
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest'
+          format: 'table'
+          exit-code: '1' # Fails the pipeline if vulnerabilities are found
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      # 5. Login to Docker Hub
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        if: success() # Only runs if the previous steps (including the scan) pass
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 6. Push to Docker Hub
+      - name: Push Image
+        if: success()
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest
