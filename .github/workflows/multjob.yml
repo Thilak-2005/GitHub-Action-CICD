@@ -1,0 +1,92 @@
+name: Enterprise Multi-Job CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  # ==========================================
+  # JOB 1: TEST STAGE
+  # ==========================================
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./secure-cicd-pipeline
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies and test
+        run: |
+          pip install -r requirements.txt
+          pytest
+
+  # ==========================================
+  # JOB 2: BUILD AND SECURITY SCAN STAGE
+  # ==========================================
+  build-and-scan:
+    runs-on: ubuntu-latest
+    needs: test # This job will ONLY run if the test job passes successfully
+    defaults:
+      run:
+        working-directory: ./secure-cicd-pipeline
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Build Docker Image Local Cache
+        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest'
+          format: 'table'
+          exit-code: '1' # Fails the pipeline if vulnerabilities are found
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      # Save the container image as a tarball archive so the next job can use it
+      - name: Save Docker Image as Artifact
+        run: docker save ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest -o my-app.tar
+
+      - name: Upload Image Artifact to Pipeline
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: secure-cicd-pipeline/my-app.tar
+          retention-days: 1
+
+  # ==========================================
+  # JOB 3: PUSH TO DOCKER HUB STAGE
+  # ==========================================
+  push-to-registry:
+    runs-on: ubuntu-latest
+    needs: build-and-scan # Only runs if the image passes security scanning
+    steps:
+      # Download the validated image tarball from the previous stage
+      - name: Download Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      # Load the image back into the runner's local Docker environment
+      - name: Load Docker Image
+        run: docker load -i my-app.tar
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push Image to Docker Hub
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest
