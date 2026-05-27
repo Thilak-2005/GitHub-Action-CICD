@@ -8,6 +8,11 @@ on:
 jobs:
   build-test-scan-push:
     runs-on: ubuntu-latest
+    
+    # NEW ADDITION: Tells the runner to execute all 'run' commands inside this specific folder
+    defaults:
+      run:
+        working-directory: ./secure-cicd-pipeline
 
     steps:
       # 1. Check out the code
@@ -19,12 +24,14 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+      
+      # Because of the default working-directory above, this will now find requirements.txt
       - name: Install dependencies and test
         run: |
           pip install -r requirements.txt
           pytest
 
-      # 3. Build the Docker Image
+      # 3. Build the Docker Image (This will now correctly find the Dockerfile)
       - name: Build Docker Image
         run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest .
 
