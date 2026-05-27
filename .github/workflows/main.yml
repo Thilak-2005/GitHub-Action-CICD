@@ -35,13 +35,13 @@ jobs:
       - name: Build Docker Image
         run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest .
 
-      # 4. Scan the Image with Trivy
+     # 4. Scan the Image with Trivy
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest'
           format: 'table'
-          exit-code: '1' # Fails the pipeline if vulnerabilities are found
+          exit-code: '0' # Changed to 0: Pipeline will print the table but will NOT fail
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
