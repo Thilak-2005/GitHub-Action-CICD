@@ -1,0 +1,126 @@
+name: Enterprise Multi-Job CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  # ==========================================
+  # JOB 1: TEST STAGE
+  # ==========================================
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./secure-cicd-pipeline
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies and test
+        run: |
+          pip install -r requirements.txt
+          pytest
+
+  # ==========================================
+  # JOB 2: BUILD AND SECURITY SCAN STAGE
+  # ==========================================
+  build-and-scan:
+    runs-on: ubuntu-latest
+    needs: test # This job will ONLY run if the test job passes successfully
+    defaults:
+      run:
+        working-directory: ./secure-cicd-pipeline
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Build Docker Image Local Cache
+        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest'
+          format: 'table'
+          exit-code: '0' 
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      # Save the container image as a archive so the next job can download it
+      - name: Save Docker Image as Artifact
+        run: docker save ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest -o my-app.tar
+
+      - name: Upload Image Artifact to Pipeline
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: secure-cicd-pipeline/my-app.tar
+          retention-days: 1
+
+  # ==========================================
+  # JOB 3: PUSH TO DOCKER HUB STAGE
+  # ==========================================
+  push-to-registry:
+    runs-on: ubuntu-latest
+    needs: build-and-scan # Only runs if the image passes the build-and-scan job
+    steps:
+      # Download the validated image archive from the previous stage
+      - name: Download Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      # Load the image back into the runner's local Docker daemon
+      - name: Load Docker Image
+        run: docker load -i my-app.tar
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push Image to Docker Hub
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest
+
+  # ==========================================
+  # JOB 4: DEPLOY TO LINUX VPS (NO AWS)
+  # ==========================================
+  deploy-to-server:
+    runs-on: ubuntu-latest
+    needs: push-to-registry # Only runs if the image successfully pushed to Docker Hub
+    steps:
+      - name: Deploy to Production Server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}         # e.g., 198.51.100.23 or mydomain.com
+          username: ${{ secrets.SERVER_USER }}     # e.g., root or ubuntu
+          key: ${{ secrets.SERVER_SSH_KEY }}       # Your private SSH key
+          script: |
+            echo "Connected to server. Starting deployment..."
+            
+            # 1. Pull the latest scanned & approved image from Docker Hub
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest
+            
+            # 2. Stop and remove the currently running container 
+            # (The '|| true' ensures the script doesn't fail if the container isn't running yet)
+            docker stop my-production-app || true
+            docker rm my-production-app || true
+            
+            # 3. Start the new container (Mapping server port 80 to container port 8080)
+            # Make sure the second port (8080) matches whatever port your Python app listens on!
+            docker run -d \
+              --name my-production-app \
+              --restart unless-stopped \
+              -p 80:8080 \
+              ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest
+              
+            echo "Deployment successfully completed! 🚀"
