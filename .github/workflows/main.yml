@@ -6,55 +6,6 @@ on:
       - main
 
 jobs:
-  build-test-scan-push:
-    runs-on: ubuntu-latest
-    
-    # NEW ADDITION: Tells the runner to execute all 'run' commands inside this specific folder
-    defaults:
-      run:
-        working-directory: ./secure-cicd-pipeline
-
-    steps:
-      # 1. Check out the code
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      # 2. Run Tests (Example for Python)
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-      
-      # Because of the default working-directory above, this will now find requirements.txt
-      - name: Install dependencies and test
-        run: |
-          pip install -r requirements.txt
-          pytest
-
-      # 3. Build the Docker Image (This will now correctly find the Dockerfile)
-      - name: Build Docker Image
-        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest .
-
-     # 4. Scan the Image with Trivy
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest'
-          format: 'table'
-          exit-code: '0' # Changed to 0: Pipeline will print the table but will NOT fail
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
-
-      # 5. Login to Docker Hub
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v2
-        if: success() # Only runs if the previous steps (including the scan) pass
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      # 6. Push to Docker Hub
-      - name: Push Image
-        if: success()
-        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest
+  # Instead of writing the test steps here, we just point to the template!
+  call-the-tester:
+    uses: ./.github/workflows/multjob.yml
